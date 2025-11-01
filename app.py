@@ -1,18 +1,23 @@
 from flask import Flask, request, jsonify
-from datetime import datetime
 from flask_cors import CORS
 import sqlite3
 import os
 
+# --------------------------
+# Flask app setup
+# --------------------------
 app = Flask(__name__)
-CORS(app)  # allow access from all clients (mobile, MT5, etc.)
+CORS(app)  # Allow any client (MT5, mobile, browser) to connect
 
-# --- Configuration ---
+# --------------------------
+# Configuration
+# --------------------------
 SIGNAL_API_KEY = os.getenv("SIGNAL_API_KEY", "my_secret_key_123")
 DB_PATH = os.path.join(os.path.dirname(__file__), "signals.db")
 
-
-# --- Initialize DB ---
+# --------------------------
+# Initialize SQLite database
+# --------------------------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute('''
@@ -29,14 +34,22 @@ def init_db():
     conn.commit()
     conn.close()
 
-
-# --- POST: Receive a trading signal ---
+# --------------------------
+# POST: Receive trade signal
+# --------------------------
 @app.route('/api/signal', methods=['POST'])
 def receive_signal():
-    data = request.get_json()
+    try:
+        # Force JSON parsing even if headers are weird (MT5 sends nonstandard Content-Type)
+        data = request.get_json(force=True)
+    except Exception as e:
+        return jsonify({"error": "Bad JSON", "msg": str(e)}), 400
+
+    # Check API key
     if not data or data.get('api_key') != SIGNAL_API_KEY:
         return jsonify({"error": "Unauthorized"}), 401
 
+    # Save signal to DB
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.execute('''
@@ -45,14 +58,14 @@ def receive_signal():
         ''', (data['symbol'], data['type'], data['volume'], data.get('sl'), data.get('tp')))
         conn.commit()
         conn.close()
-
         print("✅ Signal stored:", data)
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# --- GET: Retrieve signals after a specific ID ---
+# --------------------------
+# GET: Retrieve new signals
+# --------------------------
 @app.route('/api/signal/<int:last_id>', methods=['GET'])
 def get_signals(last_id):
     conn = sqlite3.connect(DB_PATH)
@@ -73,14 +86,16 @@ def get_signals(last_id):
 
     return jsonify(signals)
 
-
-# --- Health check ---
+# --------------------------
+# Health check
+# --------------------------
 @app.route('/health')
 def health():
     return jsonify({"status": "server running", "db": "connected"})
 
-
-# --- Start server ---
+# --------------------------
+# Start Flask app
+# --------------------------
 if __name__ == '__main__':
     init_db()
     port = int(os.environ.get("PORT", 5000))
